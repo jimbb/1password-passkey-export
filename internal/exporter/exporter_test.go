@@ -198,6 +198,52 @@ func TestExportBitwardenMultiPasskeyAndValidation(t *testing.T) {
 	if _, err := ExportKDBX(badAcct, "pw", Options{PasskeysOnly: true}); err == nil {
 		t.Fatal("KDBX exporter must reject passkey with empty private key")
 	}
+
+	// Oversized Secure Note (>6000 UTF-8 bytes) splits losslessly into parts under Bitwarden's 10,000 encrypted-char limit.
+	bigLine := strings.Repeat("A", 120) + "日\n"
+	bigNote := strings.Repeat(bigLine, 120) // ~15 KB with multi-byte UTF-8
+	noteAcct := &opmodel.AccountExport{
+		Email: "alice@example.com",
+		Vaults: []opmodel.Vault{{
+			UUID: "v1",
+			Name: "Personal",
+			Items: []opmodel.Item{{
+				UUID:         "big-note-1",
+				VaultUUID:    "v1",
+				CategoryUUID: opmodel.CategorySecureNote,
+				Title:        "Long Note",
+				Notes:        bigNote,
+			}},
+		}},
+	}
+	rawNote, err := ExportBitwardenJSON(noteAcct, Options{PasskeysOnly: false})
+	if err != nil {
+		t.Fatalf("ExportBitwardenJSON oversized note: %v", err)
+	}
+	var parsedNote struct {
+		Items []bitwardenItem `json:"items"`
+	}
+	if err := json.Unmarshal(rawNote, &parsedNote); err != nil {
+		t.Fatal(err)
+	}
+	if len(parsedNote.Items) < 3 {
+		t.Fatalf("expected oversized note to split into >=3 parts, got %d", len(parsedNote.Items))
+	}
+	var rejoined strings.Builder
+	seenIDs := map[string]bool{}
+	for _, it := range parsedNote.Items {
+		if seenIDs[it.ID] {
+			t.Fatalf("duplicate split note ID: %s", it.ID)
+		}
+		seenIDs[it.ID] = true
+		if it.Notes == nil || len(*it.Notes) > maxBitwardenNoteUTF8Bytes {
+			t.Fatalf("split note part exceeds max bytes: %d", len(*it.Notes))
+		}
+		rejoined.WriteString(*it.Notes)
+	}
+	if rejoined.String() != bigNote {
+		t.Fatal("split note parts do not losslessly reconstruct original note")
+	}
 }
 
 func TestExportCXFJSON(t *testing.T) {

@@ -5,11 +5,17 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jimbb/1password-passkey-export/internal/opcrypto"
 	"github.com/jimbb/1password-passkey-export/internal/opmodel"
 )
+
+// Bitwarden enforces a 10,000-character limit on encrypted cipher Notes (~7,300 UTF-8 bytes
+// plaintext after AES-CBC + base64 + HMAC framing). Split notes exceeding this threshold
+// losslessly across parts so imports never fail on large 1Password notes.
+const maxBitwardenNoteUTF8Bytes = 6000
 
 // Options controls filtering and formatting across exporters.
 type Options struct {
@@ -145,7 +151,7 @@ func ExportBitwardenJSON(acct *opmodel.AccountExport, opts Options) ([]byte, err
 				if err != nil {
 					return nil, err
 				}
-				out.Items = append(out.Items, bwItem)
+				out.Items = append(out.Items, splitOversizedNoteItem(bwItem)...)
 			} else {
 				// Bitwarden clients only use fido2Credentials[0], so split multi-passkey items into one login per passkey.
 				for idx := range item.Passkeys {
@@ -154,7 +160,7 @@ func ExportBitwardenJSON(acct *opmodel.AccountExport, opts Options) ([]byte, err
 					if err != nil {
 						return nil, err
 					}
-					out.Items = append(out.Items, bwItem)
+					out.Items = append(out.Items, splitOversizedNoteItem(bwItem)...)
 				}
 			}
 		}
@@ -327,4 +333,106 @@ func rawStrPtrOrNil(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// splitOversizedNoteItem splits an item whose Notes exceed Bitwarden's encrypted field limit
+// losslessly across parts. Secure Notes become "(Part 1/N)..(Part N/N)"; Logins/SSH keys keep
+// part 1 on the item itself and emit companion Secure Notes "(Notes Part 2/N)..(Notes Part N/N)".
+func splitOversizedNoteItem(item bitwardenItem) []bitwardenItem {
+	if item.Notes == nil || len(*item.Notes) <= maxBitwardenNoteUTF8Bytes {
+		return []bitwardenItem{item}
+	}
+	parts := splitUTF8Chunks(*item.Notes, maxBitwardenNoteUTF8Bytes)
+	if len(parts) <= 1 {
+		return []bitwardenItem{item}
+	}
+
+	baseName := item.Name
+	baseID := item.ID
+	total := len(parts)
+	out := make([]bitwardenItem, 0, total)
+
+	first := item
+	p0 := parts[0]
+	first.Notes = &p0
+	if first.Type == 2 {
+		first.Name = fmt.Sprintf("%s (Part 1/%d)", baseName, total)
+	}
+	out = append(out, first)
+
+	for i := 1; i < total; i++ {
+		partText := parts[i]
+		partName := fmt.Sprintf("%s (Notes Part %d/%d)", baseName, i+1, total)
+		if item.Type == 2 {
+			partName = fmt.Sprintf("%s (Part %d/%d)", baseName, i+1, total)
+		}
+		out = append(out, bitwardenItem{
+			ID:           uuid.NewSHA1(nsItem, []byte(fmt.Sprintf("%s:note-part:%d", baseID, i+1))).String(),
+			FolderID:     item.FolderID,
+			Type:         2,
+			Name:         partName,
+			Notes:        &partText,
+			Favorite:     item.Favorite,
+			Reprompt:     item.Reprompt,
+			SecureNote:   &bitwardenSecureNote{Type: 0},
+			CreationDate: item.CreationDate,
+			RevisionDate: item.RevisionDate,
+		})
+	}
+	return out
+}
+
+func splitUTF8Chunks(s string, maxBytes int) []string {
+	if len(s) <= maxBytes {
+		return []string{s}
+	}
+	var chunks []string
+	var cur strings.Builder
+
+	flush := func() {
+		if cur.Len() > 0 {
+			chunks = append(chunks, cur.String())
+			cur.Reset()
+		}
+	}
+
+	for len(s) > 0 {
+		// Take next line (including trailing \n if present).
+		var line string
+		if nl := strings.IndexByte(s, '\n'); nl >= 0 {
+			line = s[:nl+1]
+			s = s[nl+1:]
+		} else {
+			line = s
+			s = ""
+		}
+
+		if len(line) > maxBytes {
+			flush()
+			for len(line) > 0 {
+				if len(line) <= maxBytes {
+					chunks = append(chunks, line)
+					break
+				}
+				cut := maxBytes
+				for cut > 0 && !utf8.RuneStart(line[cut]) {
+					cut--
+				}
+				if cut == 0 {
+					_, sz := utf8.DecodeRuneInString(line)
+					cut = sz
+				}
+				chunks = append(chunks, line[:cut])
+				line = line[cut:]
+			}
+			continue
+		}
+
+		if cur.Len()+len(line) > maxBytes {
+			flush()
+		}
+		cur.WriteString(line)
+	}
+	flush()
+	return chunks
 }
