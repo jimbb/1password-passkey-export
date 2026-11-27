@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Unformatted files:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test with race detector
+        run: go test -v -race ./...
+
+      - name: Cross-compile (Linux, macOS, Windows)
+        run: |
+          GOOS=linux   GOARCH=amd64 go build -o /tmp/1p-passkey-export-linux   ./cmd/1p-passkey-export
+          GOOS=darwin  GOARCH=arm64 go build -o /tmp/1p-passkey-export-darwin  ./cmd/1p-passkey-export
+          GOOS=windows GOARCH=amd64 go build -o /tmp/1p-passkey-export.exe     ./cmd/1p-passkey-export

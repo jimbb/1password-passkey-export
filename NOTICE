@@ -1,0 +1,35 @@
+THIRD-PARTY NOTICES AND ATTRIBUTIONS
+
+This project is an independent, unofficial tool and is NOT affiliated with,
+endorsed by, or sponsored by AgileBits Inc. (1Password), Bitwarden Inc.,
+KeePassXC Team, or the FIDO Alliance. All trademarks belong to their respective
+owners.
+
+================================================================================
+Test Vectors & Protocol References
+================================================================================
+
+1. 1Password/burp-1password-session-analyzer (BSD-3-Clause)
+   https://github.com/1Password/burp-1password-session-analyzer
+   Copyright (c) AgileBits Inc.
+   Used for the X-AgileBits-MAC request signing known-answer test vectors in
+   internal/opcloud/cloud_test.go.
+
+2. 1Password/srp (Apache-2.0)
+   https://github.com/1Password/srp
+   Copyright (c) AgileBits Inc.
+   Used for the SRPg-4096 known-answer test vectors (standard_k, verifier, and
+   session key) in internal/opcloud/cloud_test.go.
+
+3. 1Password Security Design White Paper
+   https://1passwordstatic.com/files/security/1password-white-paper.pdf
+   Reference for 2SKD (PBES2g-HS256), password NFKD normalization, keysets, and
+   encrypted object formats.
+
+4. FIDO Alliance Credential Exchange Format (CXF 1.0)
+   https://fidoalliance.org/specs/cx/cxf-v1.0
+   Reference for the CXF 1.0 JSON exporter.
+
+5. KeePassXC (KPEX_PASSKEY_* attribute names)
+   https://github.com/keepassxreboot/keepassxc
+   Reference for KeePassXC KDBX 4 passkey entry attributes.
